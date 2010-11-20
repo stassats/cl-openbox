@@ -44,7 +44,7 @@
 
 (defun authenticate ()
   (let ((ticket (get-ticket)))
-    (format t "Please visit https://www.box.net/api/1.0/auth/~a and authenticate."
+    (format t "Visit https://www.box.net/api/1.0/auth/~a and authenticate."
             ticket)
     (when (y-or-n-p "Press y afterwards.")
       (get-auth-token ticket))))
@@ -78,10 +78,12 @@
 
 (defun upload-file (file &key (directory "0") share)
   (drakma:http-request
-   (format nil "https://upload.box.net/api/1.0/upload/~a/~a" *auth-token* directory)
+   (format nil "https://upload.box.net/api/1.0/upload/~a/~a" 
+           *auth-token* directory)
    :method :post
-   :parameters `(("share" . ,(if share "1" "0"))
-                 ("file" . ,(pathname file)))))
+   :content-length t
+   :parameters `(,@(if share '(("share" . "1")))
+                 ("file" ,(pathname file) :content-type "text/plain"))))
 
 (defun download-file (file-id save-into)
   (let ((file (drakma:http-request

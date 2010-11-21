@@ -16,6 +16,16 @@
                          `(("auth_token" . ,*auth-token*)))
                  ,@parameters)))
 
+(defun parse-xml (xml)
+  (cxml:parse xml (stp:make-builder)))
+
+(defun get-response (xml)
+  (find-child "response" (parse-xml xml)))
+
+(defun action (action-name &rest parameters)
+  (get-response (rest-request `(("action" . ,action-name)
+                                ,@(remove nil parameters)))))
+
 (defun find-child (local-name xml)
   (stp:find-child local-name xml :key #'stp:local-name :test #'equal))
 
@@ -25,67 +35,62 @@
         while node
         finally (return node)))
 
-(defun parse-xml (xml)
-  (cxml:parse xml (stp:make-builder)))
-
-(defun get-response (xml)
-  (find-child "response" (parse-xml xml)))
-
 (defun get-ticket ()
   (stp:string-value
-   (find-child "ticket"
-               (get-response (rest-request `(("action" . "get_ticket")))))))
+   (find-child "ticket" (action "get_ticket"))))
 
 (defun get-auth-token (ticket)
   (stp:string-value
    (find-child "auth_token"
-               (get-response (rest-request `(("action" . "get_auth_token")
-                                             ("ticket" . ,ticket)))))))
+               (action "get_auth_token" `("ticket" . ,ticket)))))
 
 (defun authenticate ()
   (let ((ticket (get-ticket)))
     (format t "Visit https://www.box.net/api/1.0/auth/~a and authenticate."
             ticket)
     (when (y-or-n-p "Press y afterwards.")
-      (get-auth-token ticket))))
+      (setf *auth-token* (get-auth-token ticket)))))
 
-(defun parse-directory (xml)
+(defun parse-file (xml)
   (stp:with-attributes ((id "id")
                         (name "name")
                         (file-name "file_name")) xml
     (list (or name file-name)
           id)))
 
-(defun parse-directories (xml)
-  (let ((folder (find-child-path xml "tree" "folder")))
-    (list :directories
-          (stp:map-children 'list
-                            'parse-directory
-                            (find-child "folders" folder))
-          :files
-          (stp:map-children 'list
-                            'parse-directory
-                            (find-child "files" folder)))))
+(defun parse-files (xml)
+  (stp:map-children 'list 'parse-file xml))
 
-(defun list-directories ()
-  (parse-directories
-   (get-response
-    (rest-request `(("action" . "get_account_tree")
-                    ("folder_id" . "0")
-                    ("params[]" . "nozip")
-                    ("params[]" . "simple")
-                    ("params[]" . "onelevel"))))))
+(defun parse-folders (xml)
+  (let* ((folder (find-child-path xml "tree" "folder"))
+         (folders (find-child "folders" folder))
+         (files (find-child "files" folder)))
+    (list (when folders
+            (list :folders (parse-files folders)))
+          (when files
+            (list :files (parse-files files))))))
 
-(defun upload-file (file &key (directory "0") share)
-  (drakma:http-request
-   (format nil "https://upload.box.net/api/1.0/upload/~a/~a" 
-           *auth-token* directory)
-   :method :post
-   :content-length t
-   :parameters `(,@(if share '(("share" . "1")))
-                 ("file" ,(pathname file) :content-type "text/plain"))))
+(defun list-files ()
+  (parse-folders
+   (action "get_account_tree"
+           '("folder_id" . "0")
+           '("params[]" . "nozip")
+           '("params[]" . "simple")
+           '("params[]" . "onelevel"))))
 
-(defun download-file (file-id save-into)
+(defun upload (file &key (folder "0") share)
+  (parse-files
+   (find-child "files"
+               (get-response
+                (drakma:http-request
+                 (format nil "https://upload.box.net/api/1.0/upload/~a/~a" 
+                         *auth-token* folder)
+                 :method :post
+                 :content-length t
+                 :parameters `(("file" ,(pathname file))
+                               ,@(if share '(("share" . "1")))))))))
+
+(defun download (file-id save-into)
   (let ((file (drakma:http-request
                (format nil "https://www.box.net/api/1.0/download/~a/~a"
                        *auth-token* file-id))))
@@ -94,3 +99,29 @@
                               :element-type '(unsigned-byte 8))
         (write-sequence file stream)))
     t))
+
+(defun delete (id &key folder)
+  (action "delete"
+          (cons "target_id" id)
+          (cons "target"
+                (if folder
+                    "folder"
+                    "file"))))
+
+(defun rename (id new-name &key folder)
+  (action "rename"
+          (cons "target_id" id)
+          (cons "new_name" new-name)
+          (cons "target"
+                (if folder
+                    "folder"
+                    "file"))))
+
+(defun create-folder (name &key (parent-id "0") share)
+  (action "create_folder"
+          (cons "name" name)
+          (cons "parent_id" parent-id)
+          (cons "share"
+                (if share
+                    "1"
+                    "0"))))

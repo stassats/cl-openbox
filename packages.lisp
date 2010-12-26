@@ -2,10 +2,14 @@
 
 (defpackage #:cl-openbox
   (:use #:cl)
+  (:shadow #:delete)
   (:export
    #:*api-key*
    #:*auth-token*
    #:authenticate
-   #:list-directories
-   #:upload-file
-   #:download-file))
+   #:download 
+   #:delete
+   #:rename
+   #:list-files
+   #:create-folder
+   #:upload))

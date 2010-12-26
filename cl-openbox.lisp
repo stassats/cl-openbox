@@ -70,25 +70,35 @@
           (when files
             (list :files (parse-files files))))))
 
-(defun list-files ()
+(defun list-files (&optional (folder-id "0"))
   (parse-folders
    (action "get_account_tree"
-           '("folder_id" . "0")
+           `("folder_id" . ,folder-id)
            '("params[]" . "nozip")
            '("params[]" . "simple")
            '("params[]" . "onelevel"))))
 
-(defun upload (file &key (folder "0") share)
-  (parse-files
-   (find-child "files"
-               (get-response
-                (drakma:http-request
-                 (format nil "https://upload.box.net/api/1.0/upload/~a/~a" 
-                         *auth-token* folder)
-                 :method :post
-                 :content-length t
-                 :parameters `(("file" ,(pathname file))
-                               ,@(if share '(("share" . "1")))))))))
+(defun upload (content &key name (folder "0") share)
+  "content may be a file-name, a sequence of octets, a binary input stream."
+  (let* ((content (if (stringp content)
+                      (pathname content)
+                      content))
+         (name (or name
+                   (typecase content
+                     (pathname (file-namestring content))
+                     (file-stream (pathname content))
+                     (t (error "Unable to determine name for ~a"
+                               (type-of content)))))))
+    (parse-files
+     (find-child "files"
+                 (get-response
+                  (drakma:http-request
+                   (format nil "https://upload.box.net/api/1.0/upload/~a/~a" 
+                           *auth-token* folder)
+                   :method :post
+                   :content-length t
+                   :parameters `(("file" ,content :filename ,name)
+                                 ,@(if share '(("share" . "1"))))))))))
 
 (defun download (file-id save-into)
   (let ((file (drakma:http-request
@@ -117,11 +127,17 @@
                     "folder"
                     "file"))))
 
+(defun parse-create-folder (xml)
+  (let ((id (find-child-path xml "folder" "folder_id")))
+    (when id
+      (stp:string-value id))))
+
 (defun create-folder (name &key (parent-id "0") share)
-  (action "create_folder"
-          (cons "name" name)
-          (cons "parent_id" parent-id)
-          (cons "share"
-                (if share
-                    "1"
-                    "0"))))
+  (parse-create-folder
+   (action "create_folder"
+           (cons "name" name)
+           (cons "parent_id" parent-id)
+           (cons "share"
+                 (if share
+                     "1"
+                     "0")))))
